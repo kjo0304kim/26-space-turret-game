@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>스페이스 터렛 디펜더 3D</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Courier New', Courier, monospace;
+            color: #00ffcc;
+            user-select: none;
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #btn-quit {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+            font-size: 11px;
+            padding: 4px 8px;
+            background: rgba(50, 0, 0, 0.7);
+            border: 1px solid #ff3333;
+            color: #ffaaaa;
+            cursor: pointer;
+            border-radius: 3px;
+        }
+        #btn-quit:hover { background: #ff3333; color: white; }
+
+        #hud-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; 
+            background: radial-gradient(circle at center, transparent 50%, rgba(0, 20, 40, 0.4) 100%);
+            box-shadow: inset 0 0 100px rgba(0, 255, 204, 0.2);
+        }
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 30px;
+            height: 30px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" fill="none" stroke="%2300ffcc" stroke-width="2"/><line x1="20" y1="0" x2="20" y2="10" stroke="%2300ffcc" stroke-width="2"/><line x1="20" y1="30" x2="20" y2="40" stroke="%2300ffcc" stroke-width="2"/><line x1="0" y1="20" x2="10" y2="20" stroke="%2300ffcc" stroke-width="2"/><line x1="30" y1="20" x2="40" y2="20" stroke="%2300ffcc" stroke-width="2"/></svg>');
+            background-size: contain;
+            opacity: 0.7;
+        }
+
+        /* 화면 중앙 분리형 장탄수 표시 */
+        #center-ammo-display {
+            position: absolute;
+            top: 55%; /* 크로스헤어 살짝 아래 */
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 22px;
+            font-weight: bold;
+            color: rgba(0, 255, 204, 0.8);
+            display: flex;
+            gap: 150px; /* 좌우 배럴 간격 */
+            pointer-events: none;
+            transition: color 0.3s;
+        }
+
+        .panel {
+            position: absolute;
+            padding: 10px;
+            background: rgba(0, 20, 40, 0.8);
+            border: 2px solid #00ffcc;
+            border-radius: 5px;
+            pointer-events: auto;
+            font-size: 12px;
+        }
+        #stats-panel { top: 20px; left: 20px; }
+        #controls-panel { bottom: 20px; left: 20px; }
+        #upgrade-panel { bottom: 20px; right: 20px; text-align: right; }
+
+        .stat-label { font-weight: bold; margin-right: 5px; }
+        .stat-value { color: #fff; }
+        .weapon-mode-text { font-size: 16px; font-weight: bold; margin-bottom: 2px; transition: color 0.3s; }
+        
+        button.action-btn {
+            background: rgba(0, 50, 80, 0.9);
+            color: #00ffcc;
+            border: 1px solid #00ffcc;
+            padding: 6px 10px;
+            margin: 3px 2px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+        button.action-btn:hover:not(:disabled) { background: #00ffcc; color: #000; box-shadow: 0 0 10px #00ffcc; }
+        button.action-btn:disabled { opacity: 0.5; cursor: not-allowed; border-color: #555; color: #555; }
+        
+        .health-bar-container { width: 120px; height: 12px; background: #333; border: 1px solid #00ffcc; margin-top: 5px; }
+        #health-bar { width: 100%; height: 100%; background: linear-gradient(to right, #ff3333, #ff9933); transition: width 0.3s; }
+        
+        #game-start-screen, #game-over {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.9);
+            border: 3px solid #00ffcc;
+            padding: 40px;
+            text-align: center;
+            z-index: 100;
+        }
+        #game-over { display: none; border-color: red; }
+        #game-over h1 { color: red; margin-top: 0; }
+        #game-start-screen h1 { color: #00ffcc; margin-top: 0; }
+        .big-button { font-size: 18px; padding: 10px 20px; cursor: pointer; background: #002244; color: #00ffcc; border: 2px solid #00ffcc;}
+        .big-button:hover { background: #00ffcc; color: #000; }
+    </style>
+    <!-- Tone.js 로드 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <!-- Three.js 로드 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="game-container">
+        
+        <button id="btn-quit" onclick="quitGame()" style="display:none;">게임 종료</button>
+
+        <div id="hud-overlay">
+            <div id="crosshair"></div>
+            <!-- 화면 중앙 탄약 표시기 -->
+            <div id="center-ammo-display">
+                <span id="ammo-left">300</span>
+                <span id="ammo-right">300</span>
+            </div>
+        </div>
+
+        <div id="stats-panel" class="panel">
+            <div><span class="stat-label">SCORE:</span><span id="score" class="stat-value">0</span></div>
+            <div style="margin-top: 5px;"><span class="stat-label" style="color: gold;">EC (자금):</span><span id="ec" class="stat-value" style="color: gold;">100</span></div>
+            <div style="margin-top: 10px;">
+                <span class="stat-label">기지 내구도:</span>
+                <div class="health-bar-container"><div id="health-bar"></div></div>
+            </div>
+        </div>
+
+        <div id="controls-panel" class="panel">
+            <div id="current-weapon-display" class="weapon-mode-text">모드: 게틀링</div>
+            <div class="stat-label" style="color: #ccc; margin-bottom: 10px; font-size: 10px;">(마우스 휠: 무기 변경 / R: 장전)</div>
+            <div class="stat-label">난이도 조절:</div>
+            <button class="action-btn" onclick="setDifficulty('easy')">쉬움</button>
+            <button class="action-btn" onclick="setDifficulty('normal')">보통</button>
+            <button class="action-btn" onclick="setDifficulty('hard')">어려움</button>
+            <div style="margin-top:5px; font-size: 11px;">현재: <span id="current-difficulty" class="stat-value">보통</span></div>
+        </div>
+
+        <div id="upgrade-panel" class="panel">
+            <div class="stat-label">선택된 무기 강화 (<span id="upg-wpn-name">게틀링</span>):</div>
+            <div style="margin-top: 5px;">
+                <span class="stat-label">공격력 [Lv.<span id="dmg-lv">1</span>/10]:</span>
+                <button id="btn-up-dmg" class="action-btn" onclick="upgrade('damage')">강화 (<span id="cost-dmg">30</span> EC)</button>
+            </div>
+            <div>
+                <span class="stat-label">연사속도 [Lv.<span id="rate-lv">1</span>/10]:</span>
+                <button id="btn-up-rate" class="action-btn" onclick="upgrade('fireRate')">강화 (<span id="cost-rate">50</span> EC)</button>
+            </div>
+             <div style="margin-top: 5px;">
+                <button id="btn-repair" class="action-btn" onclick="repairTurret()" style="background: rgba(0,80,50,0.8);">긴급 수리 (100 EC)</button>
+            </div>
+        </div>
+
+        <div id="game-start-screen">
+            <h1>스페이스 터렛 디펜더</h1>
+            <p>지구를 지키는 마지막 방어선</p>
+            <p>마우스 이동: 조준 / 마우스 왼쪽 유지: 발사 / R: 재장전</p>
+            <button class="big-button" onclick="startGame()">게임 시작 (소리 켜짐)</button>
+        </div>
+
+        <div id="game-over">
+            <h1 id="game-over-title">시스템 치명적 손상!</h1>
+            <p id="game-over-desc">기지가 파괴되었습니다.</p>
+            <p>최종 점수: <span id="final-score"></span></p>
+            <button class="big-button" onclick="location.reload()">시스템 재가동 (다시하기)</button>
+        </div>
+    </div>
+
+    <script>
+        let scene, camera, renderer;
+        let isGameOver = false;
+        let isPlaying = false; 
+        let animationId;
+        let isMouseDown = false; 
+
+        // 카메라 회전 제어용 변수 (관성 적용을 위해 target 값 분리)
+        let mouseX = 0, mouseY = 0;
+        let targetRotationX = 0;
+        let targetRotationY = 0;
+        let windowHalfX = window.innerWidth / 2;
+        let windowHalfY = window.innerHeight / 2;
+
+        let cannonSynth, gatlingSynth, reloadSynth;
+
+        // 게임 상태 및 밸런싱
+        const gameState = {
+            score: 0,
+            ec: 100,
+            health: 100,
+            maxHealth: 100,
+            difficulty: 'normal',
+            currentWeapon: 'gatling', 
+            weapons: {
+                gatling: {
+                    name: '게틀링',
+                    damage: 5,
+                    dmgLevel: 1, maxDmgLevel: 10, // 강화 제한
+                    fireRate: 80, 
+                    rateLevel: 1, maxRateLevel: 10, // 강화 제한
+                    costDmg: 30, costRate: 50,
+                    lastFiredTime: 0,
+                    leftAmmo: 300, rightAmmo: 300, // 각 배럴 분리
+                    maxAmmoPerBarrel: 300,
+                    reloadTime: 1500,
+                    isReloading: false,
+                    color: 0x00ffcc
+                },
+                cannon: {
+                    name: '캐논',
+                    damage: 80,
+                    dmgLevel: 1, maxDmgLevel: 10, // 강화 제한
+                    fireRate: 800, 
+                    rateLevel: 1, maxRateLevel: 10, // 강화 제한
+                    costDmg: 80, costRate: 100,
+                    lastFiredTime: 0,
+                    leftAmmo: 25, rightAmmo: 25, // 각 배럴 분리
+                    maxAmmoPerBarrel: 25,
+                    reloadTime: 2500,
+                    isReloading: false,
+                    color: 0xff3300
+                }
+            }
+        };
+
+        const difficultySettings = {
+            easy: { spawnRate: 2000, enemySpeedMult: 0.7 },
+            normal: { spawnRate: 1300, enemySpeedMult: 1.0 },
+            hard: { spawnRate: 700, enemySpeedMult: 1.4 }
+        };
+        let currentSpawnRate = difficultySettings.normal.spawnRate;
+        let lastSpawnTime = 0;
+
+        let projectiles = [];
+        let enemies = [];
+        const particles = []; 
+        
+        let gatlingLeftBarrel, gatlingRightBarrel;
+        let gatlingToggle = 0; 
+        let cannonLeftBarrel, cannonRightBarrel;
+        let cannonToggle = 0; 
+
+        function init() {
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x001122, 0.0006); 
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.set(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setClearColor(scene.fog.color);
+            document.getElementById('game-container').appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0x888888); 
+            scene.add(ambientLight);
+            
+            const headLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            headLight.position.set(0, 5, 0);
+            headLight.target.position.set(0, 0, -100);
+            camera.add(headLight);
+            camera.add(headLight.target);
+            scene.add(camera);
+
+            createSpaceEnvironment();
+            createTurretBarrels();
+
+            document.addEventListener('mousemove', onDocumentMouseMove);
+            document.addEventListener('mousedown', onDocumentMouseDown);
+            document.addEventListener('mouseup', onDocumentMouseUp);
+            document.addEventListener('keydown', onDocumentKeyDown);
+            document.addEventListener('wheel', onDocumentMouseWheel); 
+            window.addEventListener('resize', onWindowResize);
+
+            updateUI();
+            animate();
+        }
+
+        async function startGame() {
+            document.getElementById('game-start-screen').style.display = 'none';
+            document.getElementById('btn-quit').style.display = 'block';
+            isPlaying = true;
+            lastSpawnTime = Date.now(); 
+
+            await Tone.start();
+            initAudio();
+        }
+
+        function quitGame() {
+            isGameOver = true;
+            isPlaying = false;
+            document.getElementById('game-over-title').innerText = "게임 종료";
+            document.getElementById('game-over-title').style.color = "#ffffff";
+            document.getElementById('game-over-desc').innerText = "수고하셨습니다.";
+            document.getElementById('game-over').style.display = 'block';
+            document.getElementById('final-score').innerText = gameState.score.toLocaleString();
+            document.getElementById('btn-quit').style.display = 'none';
+        }
+
+        function initAudio() {
+            cannonSynth = new Tone.MembraneSynth({
+                pitchDecay: 0.1, octaves: 5, oscillator: { type: 'square' },
+                envelope: { attack: 0.01, decay: 0.4, sustain: 0.01, release: 0.4 }
+            }).toDestination();
+            cannonSynth.volume.value = -5;
+
+            gatlingSynth = new Tone.PolySynth(Tone.Synth, {
+                oscillator: { type: 'sawtooth' },
+                envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 }
+            }).toDestination();
+            gatlingSynth.volume.value = -12;
+
+            reloadSynth = new Tone.MembraneSynth({
+                pitchDecay: 0.01, octaves: 2, oscillator: { type: 'triangle' },
+                envelope: { attack: 0.01, decay: 0.1, sustain: 0, release: 0.1 }
+            }).toDestination();
+            reloadSynth.volume.value = -5;
+        }
+
+        function playFireSound(type) {
+            if (!isPlaying) return;
+            if (type === 'cannon') {
+                cannonSynth.triggerAttackRelease("C1", "8n");
+            } else if (type === 'gatling') {
+                const pitch = 400 + Math.random() * 50;
+                gatlingSynth.triggerAttackRelease(pitch, "16n");
+            }
+        }
+
+        function playReloadSound(state) {
+            if (!isPlaying) return;
+            if (state === 'start') reloadSynth.triggerAttackRelease("G1", "16n"); // 뒤로 철컥
+            if (state === 'end') reloadSynth.triggerAttackRelease("C2", "16n");   // 앞으로 찰칵
+        }
+
+        function createSpaceEnvironment() {
+            const starGeometry = new THREE.BufferGeometry();
+            const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 1.5, transparent: true, opacity: 0.8 });
+            const starVertices = [];
+            for (let i = 0; i < 5000; i++) {
+                starVertices.push((Math.random() - 0.5) * 3000, (Math.random() - 0.5) * 3000, -Math.random() * 3000);
+            }
+            starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+            scene.add(new THREE.Points(starGeometry, starMaterial));
+
+            const planetGeo = new THREE.SphereGeometry(500, 64, 64);
+            const planetMat = new THREE.MeshPhongMaterial({ color: 0x224466, emissive: 0x112233, shininess: 5 }); 
+            const planet = new THREE.Mesh(planetGeo, planetMat);
+            planet.position.set(-300, 200, -1200);
+            scene.add(planet);
+        }
+
+        function createTurretBarrels() {
+            const barrelMat = new THREE.MeshPhongMaterial({ color: 0x666666, shininess: 150 });
+
+            // 게틀링 포신
+            const gatlingGeo = new THREE.CylinderGeometry(0.2, 0.3, 3, 16);
+            gatlingLeftBarrel = new THREE.Mesh(gatlingGeo, barrelMat);
+            gatlingLeftBarrel.rotation.x = Math.PI / 2;
+            gatlingLeftBarrel.position.set(-2, 1, -2.5); 
+            camera.add(gatlingLeftBarrel);
+
+            gatlingRightBarrel = new THREE.Mesh(gatlingGeo, barrelMat);
+            gatlingRightBarrel.rotation.x = Math.PI / 2;
+            gatlingRightBarrel.position.set(2, 1, -2.5); 
+            camera.add(gatlingRightBarrel);
+
+            // 캐논 포신
+            const cannonGeo = new THREE.CylinderGeometry(0.8, 1.2, 6, 16);
+            cannonLeftBarrel = new THREE.Mesh(cannonGeo, barrelMat);
+            cannonLeftBarrel.rotation.x = Math.PI / 2;
+            cannonLeftBarrel.position.set(-4.5, -2, -3); 
+            camera.add(cannonLeftBarrel);
+
+            cannonRightBarrel = new THREE.Mesh(cannonGeo, barrelMat);
+            cannonRightBarrel.rotation.x = Math.PI / 2;
+            cannonRightBarrel.position.set(4.5, -2, -3); 
+            camera.add(cannonRightBarrel);
+        }
+
+        function onDocumentMouseWheel(event) {
+            if (isGameOver || !isPlaying) return;
+            if (event.deltaY < 0) gameState.currentWeapon = 'gatling';
+            else if (event.deltaY > 0) gameState.currentWeapon = 'cannon';
+            isMouseDown = false; 
+            updateUI();
+        }
+
+        function onDocumentKeyDown(event) {
+            if (isGameOver || !isPlaying) return;
+            if (event.key.toLowerCase() === 'r') {
+                const wpn = gameState.weapons[gameState.currentWeapon];
+                if (!wpn.isReloading && (wpn.leftAmmo < wpn.maxAmmoPerBarrel || wpn.rightAmmo < wpn.maxAmmoPerBarrel)) {
+                    reloadWeapon(wpn);
+                }
+            }
+        }
+
+        function reloadWeapon(wpn) {
+            wpn.isReloading = true;
+            updateUI();
+            
+            const isGatling = wpn.name === '게틀링';
+            const barrels = isGatling ? [gatlingLeftBarrel, gatlingRightBarrel] : [cannonLeftBarrel, cannonRightBarrel];
+            const initialZ = isGatling ? -2.5 : -3;
+            const reloadZ = isGatling ? -1.5 : -1.0; // 철거덕 뒤로 밀리는 위치
+
+            animateReloadMovement(barrels, initialZ, reloadZ, wpn.reloadTime);
+
+            setTimeout(() => {
+                wpn.leftAmmo = wpn.maxAmmoPerBarrel;
+                wpn.rightAmmo = wpn.maxAmmoPerBarrel;
+                wpn.isReloading = false;
+                updateUI();
+            }, wpn.reloadTime);
+        }
+
+        function animateReloadMovement(barrels, initialZ, reloadZ, duration) {
+            const startTime = Date.now();
+            playReloadSound('start');
+            
+            function updateReload() {
+                if(!isPlaying) return;
+                const now = Date.now();
+                const elapsed = now - startTime;
+                let progress = elapsed / duration;
+
+                if (progress >= 1.0) {
+                    barrels.forEach(b => b.position.z = initialZ);
+                    playReloadSound('end');
+                    return;
+                }
+
+                if (progress < 0.2) {
+                    // 뒤로 당기기 (철컥)
+                    const p = progress / 0.2;
+                    barrels.forEach(b => b.position.z = initialZ + (reloadZ - initialZ) * p);
+                } else if (progress < 0.9) {
+                    // 장전 중 대기
+                    barrels.forEach(b => b.position.z = reloadZ);
+                } else {
+                    // 완료 시 앞으로 원위치 (찰칵)
+                    const p = (progress - 0.9) / 0.1;
+                    barrels.forEach(b => b.position.z = reloadZ + (initialZ - reloadZ) * p);
+                }
+                requestAnimationFrame(updateReload);
+            }
+            updateReload();
+        }
+
+        function onDocumentMouseMove(event) {
+            if (isGameOver || !isPlaying) return;
+            mouseX = (event.clientX - windowHalfX) / windowHalfX;
+            mouseY = (event.clientY - windowHalfY) / windowHalfY;
+
+            // 목표 회전각만 설정 (실제 회전은 animate 루프에서 관성을 주어 처리)
+            targetRotationY = -mouseX * 0.8;
+            targetRotationX = -mouseY * 0.4;
+        }
+
+        function onDocumentMouseDown(event) {
+            if (isGameOver || !isPlaying || event.button !== 0) return;
+            isMouseDown = true;
+        }
+
+        function onDocumentMouseUp(event) {
+            if (event.button === 0) isMouseDown = false;
+        }
+
+        function fireProjectile(wpn) {
+            const isGatling = gameState.currentWeapon === 'gatling';
+            let sourceBarrel;
+            let recoilBaseZ = isGatling ? -2.5 : -3;
+            let recoilDist = isGatling ? -2.0 : -1.5; 
+            let projSpeed = isGatling ? 15.0 : 8.0;
+
+            // 배럴별 탄약 검사 및 발사
+            if (isGatling) {
+                if (wpn.leftAmmo > 0 && (gatlingToggle === 0 || wpn.rightAmmo === 0)) {
+                    sourceBarrel = gatlingLeftBarrel;
+                    wpn.leftAmmo--;
+                    gatlingToggle = 1;
+                } else if (wpn.rightAmmo > 0) {
+                    sourceBarrel = gatlingRightBarrel;
+                    wpn.rightAmmo--;
+                    gatlingToggle = 0;
+                }
+            } else {
+                if (wpn.leftAmmo > 0 && (cannonToggle === 0 || wpn.rightAmmo === 0)) {
+                    sourceBarrel = cannonLeftBarrel;
+                    wpn.leftAmmo--;
+                    cannonToggle = 1;
+                } else if (wpn.rightAmmo > 0) {
+                    sourceBarrel = cannonRightBarrel;
+                    wpn.rightAmmo--;
+                    cannonToggle = 0;
+                }
+            }
+
+            if (!sourceBarrel) return; // 양쪽 다 비었으면 발사 불가
+
+            const projGeo = new THREE.SphereGeometry(isGatling ? 0.6 : 1.8, 8, 8);
+            const projMat = new THREE.MeshBasicMaterial({ color: wpn.color });
+            const projectile = new THREE.Mesh(projGeo, projMat);
+
+            const startPos = new THREE.Vector3();
+            sourceBarrel.getWorldPosition(startPos);
+            projectile.position.copy(startPos);
+            
+            const direction = new THREE.Vector3(0, 0, -1);
+            direction.applyQuaternion(camera.quaternion);
+            
+            projectile.userData.velocity = direction.multiplyScalar(projSpeed);
+            projectile.userData.travelDistance = 0;
+            projectile.userData.damage = wpn.damage; 
+
+            const trailGeo = new THREE.BufferGeometry();
+            const trailMat = new THREE.LineBasicMaterial({ color: wpn.color, transparent: true, opacity: 0.8 });
+            const trail = new THREE.Line(trailGeo, trailMat);
+            projectile.userData.trail = trail;
+            projectile.userData.trailPositions = [];
+            scene.add(trail);
+            scene.add(projectile);
+            projectiles.push(projectile);
+
+            playFireSound(gameState.currentWeapon);
+            animateRecoil(sourceBarrel, recoilBaseZ, recoilDist, Math.min(wpn.fireRate * 0.8, 150));
+        }
+
+        function animateRecoil(barrel, initialZ, recoilZ, duration) {
+            const startTime = Date.now();
+            function updateRecoil() {
+                if(!isPlaying) return;
+                const now = Date.now();
+                const elapsed = now - startTime;
+                let progress = elapsed / duration;
+
+                if (progress < 0.5) barrel.position.z = initialZ + (recoilZ - initialZ) * (progress * 2);
+                else if (progress <= 1) barrel.position.z = recoilZ + (initialZ - recoilZ) * ((progress - 0.5) * 2);
+                else { barrel.position.z = initialZ; return; }
+                requestAnimationFrame(updateRecoil);
+            }
+            updateRecoil();
+        }
+
+        class Enemy {
+            constructor(type) {
+                this.type = type;
+                this.mesh = this.createMesh(type);
+                this.initStats(type);
+                this.spawn();
+            }
+
+            createMesh(type) {
+                let geo, mat, mesh;
+                if(type === 'fast') {
+                    geo = new THREE.TetrahedronGeometry(4);
+                    mat = new THREE.MeshPhongMaterial({ color: 0xff3333, shininess: 100, emissive: 0x330000 });
+                    mesh = new THREE.Mesh(geo, mat);
+                    mesh.userData.originalEmissive = 0x330000;
+                } else if(type === 'heavy') {
+                    geo = new THREE.BoxGeometry(10, 10, 10);
+                    mat = new THREE.MeshPhongMaterial({ color: 0x3366ff, shininess: 50, emissive: 0x000033 });
+                    mesh = new THREE.Mesh(geo, mat);
+                    mesh.userData.originalEmissive = 0x000033;
+                } else {
+                    geo = new THREE.SphereGeometry(6, 16, 16);
+                    mat = new THREE.MeshPhongMaterial({ color: 0xffcc00, emissive: 0x333300 });
+                    mesh = new THREE.Mesh(geo, mat);
+                    mesh.userData.originalEmissive = 0x333300;
+                }
+                return mesh;
+            }
+
+            initStats(type) {
+                const speedMult = difficultySettings[gameState.difficulty].enemySpeedMult;
+                if(type === 'fast') { this.hp = 20; this.speed = 2.5 * speedMult; this.scoreValue = 150; this.ecValue = 15; }
+                else if(type === 'heavy') { this.hp = 150; this.speed = 0.8 * speedMult; this.scoreValue = 500; this.ecValue = 50; }
+                else { this.hp = 50; this.speed = 1.5 * speedMult; this.scoreValue = 100; this.ecValue = 25; }
+                this.maxHp = this.hp;
+            }
+
+            spawn() {
+                const x = (Math.random() - 0.5) * 1000;
+                const y = (Math.random() - 0.5) * 600; 
+                const z = -1000 - Math.random() * 500; 
+                this.mesh.position.set(x, y, z);
+                this.mesh.lookAt(0, 0, 0);
+                scene.add(this.mesh);
+            }
+
+            update() {
+                const direction = new THREE.Vector3(0, 0, 0).sub(this.mesh.position).normalize();
+                this.mesh.position.add(direction.multiplyScalar(this.speed));
+                this.mesh.rotation.x += 0.02;
+                this.mesh.rotation.z += 0.01;
+            }
+
+            takeDamage(amount) {
+                this.hp -= amount;
+                this.mesh.material.emissive.setHex(0xffffff);
+                setTimeout(() => { if(this.mesh) this.mesh.material.emissive.setHex(this.mesh.userData.originalEmissive); }, 100);
+            }
+        }
+
+        function manageEnemySpawning(time) {
+            if (time - lastSpawnTime > currentSpawnRate) {
+                const rand = Math.random();
+                let type = 'normal';
+                if (rand < 0.25) type = 'fast';
+                else if (rand > 0.85) type = 'heavy';
+                enemies.push(new Enemy(type));
+                lastSpawnTime = time;
+            }
+        }
+
+        function createExplosion(position, color, size = 1.0) {
+            const particleCount = 30 * size;
+            const geo = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const velocities = [];
+
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] = position.x;
+                positions[i * 3 + 1] = position.y;
+                positions[i * 3 + 2] = position.z;
+                velocities.push(new THREE.Vector3((Math.random() - 0.5) * 15 * size, (Math.random() - 0.5) * 15 * size, (Math.random() - 0.5) * 15 * size));
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            const mat = new THREE.PointsMaterial({ color: color, size: 3 * size, transparent: true });
+            const particleSystem = new THREE.Points(geo, mat);
+            particleSystem.userData.velocities = velocities;
+            particleSystem.userData.life = 1.0; 
+            scene.add(particleSystem);
+            particles.push(particleSystem);
+        }
+
+        function animate() {
+            animationId = requestAnimationFrame(animate);
+            if (isGameOver) return;
+
+            const time = Date.now();
+
+            if (isPlaying) {
+                // 포탑 회전 관성 적용 (게틀링은 빠르고, 캐논은 느리게 쫓아감)
+                const isGatling = gameState.currentWeapon === 'gatling';
+                const turnSpeed = isGatling ? 0.15 : 0.025; // 캐논을 묵직하게 조절
+                camera.rotation.y += (targetRotationY - camera.rotation.y) * turnSpeed;
+                camera.rotation.x += (targetRotationX - camera.rotation.x) * turnSpeed;
+
+                manageEnemySpawning(time);
+
+                if (isMouseDown) {
+                    const currentWpn = gameState.weapons[gameState.currentWeapon];
+                    if (!currentWpn.isReloading && (currentWpn.leftAmmo > 0 || currentWpn.rightAmmo > 0)) {
+                        if (time - currentWpn.lastFiredTime > currentWpn.fireRate) {
+                            fireProjectile(currentWpn);
+                            currentWpn.lastFiredTime = time;
+                            updateUI();
+                        }
+                    } else if (currentWpn.leftAmmo <= 0 && currentWpn.rightAmmo <= 0 && !currentWpn.isReloading) {
+                        reloadWeapon(currentWpn);
+                    }
+                }
+            }
+
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const proj = projectiles[i];
+                proj.position.add(proj.userData.velocity);
+                proj.userData.travelDistance += proj.userData.velocity.length();
+
+                proj.userData.trailPositions.push(proj.position.clone());
+                if (proj.userData.trailPositions.length > 10) proj.userData.trailPositions.shift();
+                proj.userData.trail.geometry.setFromPoints(proj.userData.trailPositions);
+
+                if (proj.userData.travelDistance > 2000) {
+                    scene.remove(proj.userData.trail);
+                    scene.remove(proj);
+                    projectiles.splice(i, 1);
+                    continue;
+                }
+
+                let hit = false;
+                for (let j = enemies.length - 1; j >= 0; j--) {
+                    const enemy = enemies[j];
+                    const threshold = enemy.type === 'heavy' ? 12 : 8;
+                    
+                    if (proj.position.distanceTo(enemy.mesh.position) < threshold) {
+                        enemy.takeDamage(proj.userData.damage);
+                        createExplosion(proj.position, proj.material.color, proj.userData.damage < 20 ? 0.7 : 1.5); 
+                        
+                        scene.remove(proj.userData.trail);
+                        scene.remove(proj);
+                        projectiles.splice(i, 1);
+                        hit = true;
+
+                        if (enemy.hp <= 0) {
+                            gameState.score += enemy.scoreValue;
+                            gameState.ec += enemy.ecValue;
+                            createExplosion(enemy.mesh.position, enemy.mesh.material.color, 1.5);
+                            scene.remove(enemy.mesh);
+                            enemies.splice(j, 1);
+                            updateUI();
+                        }
+                        break; 
+                    }
+                }
+                if(hit) continue; 
+            }
+
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                enemy.update();
+
+                if (enemy.mesh.position.distanceTo(camera.position) < 25) {
+                    gameState.health -= (enemy.type === 'heavy' ? 30 : 15);
+                    createExplosion(camera.position, 0xff3300, 2.0); 
+                    scene.remove(enemy.mesh);
+                    enemies.splice(i, 1);
+                    updateUI();
+                    if (gameState.health <= 0) gameOver();
+                }
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const ps = particles[i];
+                const positions = ps.geometry.attributes.position.array;
+                const vels = ps.userData.velocities;
+                for(let j=0; j < vels.length; j++) {
+                    positions[j*3] += vels[j].x;
+                    positions[j*3+1] += vels[j].y;
+                    positions[j*3+2] += vels[j].z;
+                    vels[j].multiplyScalar(0.95); 
+                }
+                ps.geometry.attributes.position.needsUpdate = true;
+                ps.userData.life -= 0.02;
+                ps.material.opacity = ps.userData.life;
+                if(ps.userData.life <= 0) {
+                    scene.remove(ps);
+                    particles.splice(i, 1);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function updateUI() {
+            document.getElementById('score').innerText = gameState.score.toLocaleString();
+            document.getElementById('ec').innerText = gameState.ec;
+            
+            const isGatling = gameState.currentWeapon === 'gatling';
+            const wpn = gameState.weapons[gameState.currentWeapon];
+            const wpnDisplay = document.getElementById('current-weapon-display');
+            const centerAmmoDisplay = document.getElementById('center-ammo-display');
+            
+            wpnDisplay.innerText = `모드: ${wpn.name}`;
+            wpnDisplay.style.color = isGatling ? '#00ffcc' : '#ff3300';
+            wpnDisplay.style.textShadow = `0 0 10px ${isGatling ? '#00ffcc' : '#ff3300'}`;
+            
+            // 중앙 탄약 UI 업데이트
+            if (wpn.isReloading) {
+                document.getElementById('ammo-left').innerText = "장전";
+                document.getElementById('ammo-right').innerText = "중...";
+                centerAmmoDisplay.style.color = '#ff3333';
+            } else {
+                document.getElementById('ammo-left').innerText = wpn.leftAmmo;
+                document.getElementById('ammo-right').innerText = wpn.rightAmmo;
+                centerAmmoDisplay.style.color = (wpn.leftAmmo + wpn.rightAmmo) <= (wpn.maxAmmoPerBarrel * 0.4) ? '#ffcc00' : (isGatling ? '#00ffcc' : '#ff3300');
+            }
+
+            document.getElementById('upg-wpn-name').innerText = wpn.name;
+
+            const healthPercent = Math.max(0, (gameState.health / gameState.maxHealth) * 100);
+            document.getElementById('health-bar').style.width = healthPercent + '%';
+            document.getElementById('health-bar').style.backgroundColor = healthPercent > 50 ? '#ff9933' : '#ff3333';
+
+            // 업그레이드 UI (강화 제한 반영)
+            document.getElementById('dmg-lv').innerText = wpn.dmgLevel;
+            document.getElementById('rate-lv').innerText = wpn.rateLevel;
+
+            if (wpn.dmgLevel >= wpn.maxDmgLevel) {
+                document.getElementById('btn-up-dmg').innerHTML = 'MAX';
+                document.getElementById('btn-up-dmg').disabled = true;
+            } else {
+                document.getElementById('btn-up-dmg').innerHTML = `강화 (<span id="cost-dmg">${wpn.costDmg}</span> EC)`;
+                document.getElementById('btn-up-dmg').disabled = gameState.ec < wpn.costDmg;
+            }
+
+            if (wpn.rateLevel >= wpn.maxRateLevel) {
+                document.getElementById('btn-up-rate').innerHTML = 'MAX';
+                document.getElementById('btn-up-rate').disabled = true;
+            } else {
+                document.getElementById('btn-up-rate').innerHTML = `강화 (<span id="cost-rate">${wpn.costRate}</span> EC)`;
+                document.getElementById('btn-up-rate').disabled = gameState.ec < wpn.costRate;
+            }
+            
+            document.getElementById('btn-repair').disabled = gameState.ec < 100 || gameState.health >= gameState.maxHealth;
+        }
+
+        function setDifficulty(level) {
+            gameState.difficulty = level;
+            currentSpawnRate = difficultySettings[level].spawnRate;
+            document.getElementById('current-difficulty').innerText = level === 'easy' ? '쉬움' : (level === 'normal' ? '보통' : '어려움');
+            enemies.forEach(enemy => enemy.initStats(enemy.type));
+        }
+
+        function upgrade(type) {
+            const wpn = gameState.weapons[gameState.currentWeapon];
+            const cost = type === 'damage' ? wpn.costDmg : wpn.costRate;
+
+            if (gameState.ec >= cost) {
+                gameState.ec -= cost;
+                if (type === 'damage' && wpn.dmgLevel < wpn.maxDmgLevel) {
+                    // 게틀링 데미지(최대 14)는 캐논 데미지(최대 170)를 절대 넘지 못하도록 설정
+                    wpn.damage += (gameState.currentWeapon === 'gatling' ? 1 : 10); 
+                    wpn.dmgLevel++;
+                    wpn.costDmg = Math.floor(wpn.costDmg * 1.5); 
+                } else if (type === 'fireRate' && wpn.rateLevel < wpn.maxRateLevel) {
+                    // 연사 속도 너무 빨라지는 것을 방지
+                    wpn.fireRate = Math.max(10, Math.floor(wpn.fireRate * 0.92)); 
+                    wpn.rateLevel++;
+                    wpn.costRate = Math.floor(wpn.costRate * 1.5);
+                }
+                updateUI();
+            }
+        }
+
+        function repairTurret() {
+            if(gameState.ec >= 100 && gameState.health < gameState.maxHealth) {
+                gameState.ec -= 100;
+                gameState.health = Math.min(gameState.maxHealth, gameState.health + 30);
+                updateUI();
+            }
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            isPlaying = false;
+            isMouseDown = false;
+            document.getElementById('game-over').style.display = 'block';
+            document.getElementById('final-score').innerText = gameState.score.toLocaleString();
+            document.getElementById('btn-quit').style.display = 'none';
+        }
+
+        function onWindowResize() {
+            windowHalfX = window.innerWidth / 2;
+            windowHalfY = window.innerHeight / 2;
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+</body>
+</html>
